@@ -16,6 +16,7 @@ import * as econcalendar from "../providers/econcalendar.js";
 import * as finra from "../providers/finra.js";
 import * as secedgar from "../providers/secedgar.js";
 import { getHeatmapSnapshot, getOrderflowHistory } from "../providers/heatmapCapture.js";
+import { aggregateCandles } from "../providers/candleAggregation.js";
 
 export const marketRouter = Router();
 
@@ -235,6 +236,22 @@ marketRouter.get("/quotes", async (req, res) => {
 
 // ---- history / candles ----
 
+const STOCK_INTERVALS: Record<string, { yahoo: string; aggregateSeconds?: number }> = {
+  "5m": { yahoo: "5m" },
+  "15m": { yahoo: "15m" },
+  "30m": { yahoo: "30m" },
+  "1H": { yahoo: "60m" },
+  "3H": { yahoo: "60m", aggregateSeconds: 3 * 60 * 60 },
+  "4H": { yahoo: "60m", aggregateSeconds: 4 * 60 * 60 },
+};
+
+async function explicitStockHistory(symbol: string, rangeKey: string, interval: string) {
+  const config = STOCK_INTERVALS[interval];
+  if (!config) throw new Error("unsupported stock interval");
+  const candles = await yahoo.history(symbol, yahooRange(rangeKey).range, config.yahoo);
+  return config.aggregateSeconds ? aggregateCandles(candles, config.aggregateSeconds) : candles;
+}
+
 marketRouter.get("/history/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   const rangeKey = String(req.query.range ?? "6M");
@@ -244,6 +261,9 @@ marketRouter.get("/history/:symbol", async (req, res) => {
   const cryptoInterval = kraken.isCryptoInterval(interval) ? interval : null;
   if (cryptoSymbol && !cryptoInterval) {
     return res.status(400).json({ error: "unsupported crypto interval" });
+  }
+  if (!cryptoSymbol && interval !== "AUTO" && (!STOCK_INTERVALS[interval] || isVix(symbol))) {
+    return res.status(400).json({ error: "unsupported stock interval" });
   }
   const historyTtl = interval === "1s" || interval === "10s" ? 500 : interval === "AUTO" ? HISTORY_TTL : 5_000;
   try {
@@ -259,6 +279,8 @@ marketRouter.get("/history/:symbol", async (req, res) => {
           : kraken.history(symbol, rangeKey, cryptoInterval!)
         : isVix(symbol)
         ? vixHistory(rangeKey)
+        : interval !== "AUTO"
+        ? explicitStockHistory(symbol, rangeKey, interval)
         : withFallback([
             ["nasdaq", () => nasdaq.history(symbol, rangeKey)],
             ["yahoo", () => yahoo.history(symbol, yahooRange(rangeKey).range, yahooRange(rangeKey).interval)],

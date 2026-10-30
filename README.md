@@ -43,6 +43,7 @@ No signup. No credit card. No rate‑limited demo tier. Clone it, `npm install`,
 - 🔎 **Full‑market screener** — filter by sector, market cap, % change, and volume across the entire US equity market, sortable on every column
 - 🗺️ **Live sector heatmap** — treemap sized by market cap, colored by daily % change, refreshing every few seconds
 - 🌡️ **Chart order-flow overlays** — price/time-aligned liquidity heatmap, large-trade bubbles, and liquidation markers on crypto charts
+- 🔮 **Kronos forecasting** — optional OHLCV forecasts from the official open-source Kronos models, configured in a dedicated persistent widget and rendered directly on the primary chart after every closed candle (5m and higher)
 - ⛓️ **Options chain** — calls and puts side‑by‑side with strike, bid/ask, volume, open interest, and ITM highlighting
 - 🪙 **Crypto USD terminal** — common `*USD` pairs, Kraken WebSocket order book/trades, buy/sell depth heatmaps, Kraken Futures liquidation flow, and OHLCV charts
 - ⚡ **Kraken execution** — validate or place spot market/limit orders through protected server-side routes; API secrets never reach the browser
@@ -120,16 +121,31 @@ The chart order-flow overlays capture `BTCUSD`, `ETHUSD`, `ADAUSD`, `AVAXUSD`, `
 ## 🚀 Quick start
 
 ```bash
-git clone https://github.com/ErTasselli/openterminal.git
+git clone --recurse-submodules https://github.com/APICodeDev/OpenTerminal.git
 cd openterminal
 npm install
+npm run kronos:install
 npm run dev
 ```
 
 - Web UI → **http://localhost:3000**
 - API health → **http://localhost:4000/api/status**
 
-That's it — no `.env` file required to get a fully working terminal.
+No `.env` file is required. `npm run dev:core` starts only the web and Node services when Kronos is not needed.
+
+### Kronos forecasting
+
+Add the **KRONOS** widget, select an explicit candle interval of `5m`, `15m`, `30m`, `1H`, `3H`, or `4H` on the primary chart, configure the model and sampling parameters, and activate it. The symbol and interval always come from that chart. All other choices are stored in the browser workspace.
+
+The first forecast downloads the selected public model from Hugging Face and can take several minutes, especially on CPU. Later forecasts reuse the loaded model and are requested once per newly closed candle. Forecast candles are cyan/magenta and their close path is dashed yellow; they are predictions, not observed market data or trading advice.
+
+Kronos is included as a pinned git submodule. On an existing clone, initialize it with:
+
+```bash
+git submodule update --init --recursive
+```
+
+Local development requires Python 3.10+ and PyTorch. `npm run kronos:install` installs the Python requirements; `KRONOS_DEVICE` can be set to `cpu`, `cuda:0`, or another PyTorch device. Docker uses CPU by default and persists downloaded weights in the `kronos-models` volume.
 
 ### Optional: AI assistant
 
@@ -175,7 +191,7 @@ Two optional knobs for the assistant, both standard for the Anthropic SDK:
 docker compose up --build
 ```
 
-Open the web UI at **http://localhost:3001**; the API health endpoint is **http://localhost:4000/api/status**. Portfolio data persists in the `terminal-data` volume (SQLite, WAL mode). Ports are published on `127.0.0.1` only by default; see [Security defaults](#security-defaults) to expose it deliberately.
+Open the web UI at **http://localhost:3001**; the API health endpoint is **http://localhost:4000/api/status** and the local-only Kronos health endpoint is **http://localhost:8001/health**. Portfolio data persists in the `terminal-data` volume (SQLite, WAL mode), while downloaded Kronos weights persist in `kronos-models`. Ports are published on `127.0.0.1` only by default; see [Security defaults](#security-defaults) to expose it deliberately.
 
 If either default port is already in use, set `WEB_PORT` or `API_PORT` before starting Compose. For example, in PowerShell:
 
@@ -195,6 +211,7 @@ Then open **http://localhost:3010**.
 | Frontend | Next.js 15 · React 19 · TypeScript · Tailwind CSS 4 · Zustand · TanStack Query |
 | Charts | `lightweight-charts` (candles/indicators) · D3 (heatmap treemap) · Recharts (yield curve) |
 | Backend | Node.js · Express · TypeScript |
+| Forecasting | Kronos · Python · PyTorch · Hugging Face |
 | Database | SQLite (`better-sqlite3`, WAL mode) |
 | AI | Anthropic Claude (optional) |
 
@@ -203,6 +220,7 @@ Then open **http://localhost:3010**.
 ## 📁 Project structure
 
 ```
+├── services/kronos/         # Python inference service + pinned official Kronos submodule
 ├── server/                  # Express + TypeScript API
 │   └── src/
 │       ├── providers/       # nasdaq, tradingview, yahoo, stooq, fred, econcalendar, coingecko, binance, news

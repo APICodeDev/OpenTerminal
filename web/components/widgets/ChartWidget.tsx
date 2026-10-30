@@ -9,13 +9,20 @@ import {
   HistogramSeries,
   AreaSeries,
   BarSeries,
+  LineStyle,
   type IChartApi,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { apiGet, fmt, fmtBig, type Candle } from "../../lib/api";
+import { apiGet, apiPost, fmt, fmtBig, type Candle } from "../../lib/api";
 import { isCryptoUsdSymbol } from "../../lib/crypto";
 import { sma, ema, vwap, rsi, macd, bollinger, type Point } from "../../lib/indicators";
-import { useWidgetSymbol, type WidgetInstance } from "../../store/terminal";
+import {
+  isKronosTimeframe,
+  useTerminal,
+  useWidgetSymbol,
+  type ChartTimeframe,
+  type WidgetInstance,
+} from "../../store/terminal";
 
 type OrderflowSample = {
   timestamp: number;
@@ -35,12 +42,30 @@ type OrderflowHistory = {
   samples: OrderflowSample[];
   events: OrderflowEvent[];
 };
+type KronosPrediction = {
+  symbol: string;
+  timeframe: string;
+  model: string;
+  lastCandleTime: number;
+  generatedAt: string;
+  forecast: Candle[];
+  cached: boolean;
+};
 
 const RANGES = ["1D", "5D", "1M", "6M", "YTD", "1Y", "5Y", "MAX"] as const;
 const TIMEFRAMES = ["AUTO", "4H", "3H", "1H", "30m", "15m", "5m", "1m", "10s", "1s"] as const;
 const CHART_TYPES = ["candles", "bars", "line", "area"] as const;
 const INDICATORS = ["SMA20", "SMA50", "SMA200", "EMA20", "VWAP", "BOLL", "RSI", "MACD"] as const;
 const ORDERFLOW_SAMPLE_SECONDS = 1;
+const STOCK_UNSUPPORTED_TIMEFRAMES = new Set<Timeframe>(["1m", "10s", "1s"]);
+const KRONOS_INTERVAL_SECONDS: Partial<Record<ChartTimeframe, number>> = {
+  "5m": 5 * 60,
+  "15m": 15 * 60,
+  "30m": 30 * 60,
+  "1H": 60 * 60,
+  "3H": 3 * 60 * 60,
+  "4H": 4 * 60 * 60,
+};
 
 function percentileCap(values: number[], percentile = 0.95): number {
   const sorted = values.filter((value) => value > 0 && Number.isFinite(value)).sort((a, b) => a - b);
@@ -82,7 +107,7 @@ const INDICATOR_COLOR: Record<string, string> = {
 export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
   const symbol = useWidgetSymbol(widget);
   const [range, setRange] = useState<Range>("6M");
-  const [timeframe, setTimeframe] = useState<Timeframe>("AUTO");
+  const [timeframe, setTimeframe] = useState<Timeframe>(() => useTerminal.getState().primaryChart.timeframe);
   const [chartType, setChartType] = useState<ChartType>("candles");
   const [active, setActive] = useState<Set<Indicator>>(new Set(["SMA20"]));
   const [showLiquidityMap, setShowLiquidityMap] = useState(false);
@@ -94,7 +119,12 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
   const heatmapCanvasRef = useRef<HTMLCanvasElement>(null);
   const priceToCoordinateRef = useRef<((price: number) => number | null) | null>(null);
   const isCrypto = isCryptoUsdSymbol(symbol);
-  const effectiveTimeframe: Timeframe = isCrypto ? timeframe : "AUTO";
+  const effectiveTimeframe: Timeframe = !isCrypto && STOCK_UNSUPPORTED_TIMEFRAMES.has(timeframe) ? "AUTO" : timeframe;
+  const isPrimaryChart = useTerminal((state) => state.widgets.find((item) => item.type === "chart")?.id === widget.id);
+  const kronos = useTerminal((state) => state.kronos);
+  const setPrimaryChart = useTerminal((state) => state.setPrimaryChart);
+  const setKronosRuntime = useTerminal((state) => state.setKronosRuntime);
+  const kronosEligible = isPrimaryChart && isKronosTimeframe(effectiveTimeframe);
   const orderflowEnabled = isCrypto && (showLiquidityMap || showOrderFlow || showLiquidations);
   const { data: orderflow, error: orderflowError } = useQuery({
     queryKey: ["chart-orderflow-history", symbol],
@@ -105,7 +135,8 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
 
   const selectTimeframe = (next: Timeframe) => {
     setTimeframe(next);
-    if (next === "1s" || next === "10s" || next === "1m" || next === "5m") setRange("1D");
+    if (next === "1s" || next === "10s" || next === "1m") setRange("1D");
+    else if (next === "5m") setRange(isCrypto ? "1D" : "5D");
     else if (next === "15m" || next === "30m" || next === "1H") setRange("5D");
     else if (next === "3H" || next === "4H") setRange("1M");
   };
@@ -127,6 +158,78 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
     ),
     refetchInterval: refetchMs,
   });
+
+  useEffect(() => {
+    if (timeframe !== effectiveTimeframe) setTimeframe(effectiveTimeframe);
+  }, [effectiveTimeframe, timeframe]);
+
+  useEffect(() => {
+    if (isPrimaryChart) setPrimaryChart({ symbol, timeframe: effectiveTimeframe });
+  }, [effectiveTimeframe, isPrimaryChart, setPrimaryChart, symbol]);
+
+  const kronosClosedCandles = useMemo(() => {
+    const intervalSeconds = KRONOS_INTERVAL_SECONDS[effectiveTimeframe];
+    if (!candles || !intervalSeconds) return [];
+    const now = Math.floor(Date.now() / 1000);
+    return candles
+      .filter((candle) => candle.time + intervalSeconds <= now)
+      .sort((a, b) => a.time - b.time)
+      .slice(-kronos.lookback);
+  }, [candles, effectiveTimeframe, kronos.lookback]);
+  const lastClosedCandleTime = kronosClosedCandles.at(-1)?.time ?? null;
+
+  const {
+    data: kronosPrediction,
+    error: kronosError,
+    isFetching: kronosLoading,
+  } = useQuery({
+    queryKey: [
+      "kronos-prediction",
+      symbol,
+      effectiveTimeframe,
+      lastClosedCandleTime,
+      kronos.model,
+      kronos.lookback,
+      kronos.predictionLength,
+      kronos.temperature,
+      kronos.topK,
+      kronos.topP,
+      kronos.sampleCount,
+    ],
+    queryFn: () => apiPost<KronosPrediction>("/api/kronos/predict", {
+      symbol,
+      timeframe: effectiveTimeframe,
+      model: kronos.model,
+      lookback: kronos.lookback,
+      predictionLength: kronos.predictionLength,
+      temperature: kronos.temperature,
+      topK: kronos.topK,
+      topP: kronos.topP,
+      sampleCount: kronos.sampleCount,
+      candles: kronosClosedCandles,
+    }),
+    enabled: kronos.enabled && kronosEligible && kronosClosedCandles.length >= 32 && lastClosedCandleTime !== null,
+    staleTime: Infinity,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+
+  useEffect(() => {
+    if (!isPrimaryChart) return;
+    if (!kronos.enabled) {
+      setKronosRuntime({ status: "idle", error: null });
+    } else if (!kronosEligible) {
+      setKronosRuntime({ status: "paused", error: null });
+    } else if (kronosLoading) {
+      setKronosRuntime({ status: "loading", error: null });
+    } else if (kronosError) {
+      setKronosRuntime({ status: "error", error: kronosError.message });
+    } else if (kronosPrediction) {
+      setKronosRuntime({ status: "ready", generatedAt: kronosPrediction.generatedAt, error: null });
+    } else {
+      setKronosRuntime({ status: "idle", error: null });
+    }
+  }, [isPrimaryChart, kronos.enabled, kronosEligible, kronosError, kronosLoading, kronosPrediction, setKronosRuntime]);
 
   // Fast time -> candle lookup for the crosshair legend, independent of chart type.
   const byTime = useMemo(() => {
@@ -274,6 +377,41 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       overlay(indicatorData.BOLL.lower, "rgba(255,153,0,0.5)");
     }
 
+    if (kronos.enabled && kronosEligible && kronosPrediction?.forecast.length) {
+      const forecast = kronosPrediction.forecast;
+      const forecastCandles = chart.addSeries(CandlestickSeries, {
+        upColor: "rgba(0, 188, 212, 0.58)",
+        downColor: "rgba(224, 64, 251, 0.58)",
+        borderUpColor: "#00bcd4",
+        borderDownColor: "#e040fb",
+        wickUpColor: "#00bcd4",
+        wickDownColor: "#e040fb",
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: "KRONOS",
+      });
+      forecastCandles.setData(forecast.map((candle) => ({
+        time: ts(candle.time),
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+      })));
+      const lastActual = candles.find((candle) => candle.time === kronosPrediction.lastCandleTime)
+        ?? candles[candles.length - 1];
+      chart.addSeries(LineSeries, {
+        color: "#ffd54f",
+        lineWidth: 2,
+        lineStyle: LineStyle.Dashed,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        title: "Kronos close",
+      }).setData([
+        { time: ts(lastActual.time), value: lastActual.close },
+        ...forecast.map((candle) => ({ time: ts(candle.time), value: candle.close })),
+      ]);
+    }
+
     let paneIdx = 1;
     if (indicatorData?.RSI) {
       const s = chart.addSeries(LineSeries, { color: INDICATOR_COLOR.RSI, lineWidth: 1 }, paneIdx++);
@@ -304,9 +442,10 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
 
     if (orderflowEnabled && candles.length > 0) {
       const lastTime = candles[candles.length - 1].time;
+      const forecastEnd = kronos.enabled && kronosEligible ? kronosPrediction?.forecast.at(-1)?.time : null;
       chart.timeScale().setVisibleRange({
         from: ts(lastTime - 30 * 60),
-        to: ts(lastTime + 60),
+        to: ts(forecastEnd ?? lastTime + 60),
       });
     } else {
       chart.timeScale().fitContent();
@@ -316,7 +455,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       chartRef.current = null;
       priceToCoordinateRef.current = null;
     };
-  }, [candles, chartType, indicatorData, range, effectiveTimeframe, byTime, orderflowEnabled]);
+  }, [candles, chartType, indicatorData, range, effectiveTimeframe, byTime, orderflowEnabled, kronos.enabled, kronosEligible, kronosPrediction]);
 
   useEffect(() => {
     const canvas = heatmapCanvasRef.current;
@@ -505,24 +644,32 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
             {r}
           </button>
         ))}
-        {isCrypto && <>
+        <>
           <span className="w-2" />
           <span className="dim px-1 self-center">VELA</span>
           {TIMEFRAMES.map((value) => {
             const unavailableForFutures = orderflowEnabled && (value === "1s" || value === "10s");
+            const unavailableForStocks = !isCrypto && (value === "1s" || value === "10s" || value === "1m");
+            const unavailable = unavailableForFutures || unavailableForStocks;
             return (
               <button
                 key={value}
                 className={`term-btn ${timeframe === value ? "active" : ""}`}
-                disabled={unavailableForFutures}
-                title={unavailableForFutures ? "Binance USD-M no ofrece velas por debajo de 1 minuto" : undefined}
+                disabled={unavailable}
+                title={
+                  unavailableForFutures
+                    ? "Binance USD-M no ofrece velas por debajo de 1 minuto"
+                    : unavailableForStocks
+                    ? "El proveedor de acciones admite velas explícitas desde 5 minutos"
+                    : undefined
+                }
                 onClick={() => selectTimeframe(value)}
               >
                 {value}
               </button>
             );
           })}
-        </>}
+        </>
         <span className="w-2" />
         {CHART_TYPES.map((t) => (
           <button key={t} className={`term-btn ${chartType === t ? "active" : ""}`} onClick={() => setChartType(t)}>
@@ -574,6 +721,7 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
       </div>
       {error && <div className="p-2 down">Error: {(error as Error).message}</div>}
       {orderflowError && orderflowEnabled && <div className="px-2 py-1 text-[10px] text-[var(--amber)]">{orderflowError.message}</div>}
+      {kronosError && kronos.enabled && kronosEligible && <div className="px-2 py-1 text-[10px] down">Kronos: {kronosError.message}</div>}
       <div className="relative flex-1 min-h-0">
         {legend && (
           <div className="absolute top-1 left-2 z-10 flex flex-col gap-0.5 text-[11px] pointer-events-none bg-[rgba(10,10,10,0.7)] px-2 py-1 rounded max-w-[95%]">
@@ -604,6 +752,19 @@ export default function ChartWidget({ widget }: { widget: WidgetInstance }) {
               <span>MÁS INTENSIDAD = MÁS LIQUIDEZ</span>
             </>}
             {showLiquidations && <span>ARO DORADO = LIQUIDACIÓN</span>}
+          </div>
+        )}
+        {kronos.enabled && kronosEligible && (
+          <div className={`absolute right-16 top-1 z-10 border px-2 py-1 text-[9px] pointer-events-none ${
+            kronosError
+              ? "border-[var(--down)]/60 bg-[rgba(40,0,0,0.82)] down"
+              : "border-[#ffd54f]/50 bg-[rgba(10,10,10,0.82)] text-[#ffd54f]"
+          }`}>
+            {kronosLoading
+              ? "KRONOS · CALCULANDO…"
+              : kronosPrediction
+              ? `KRONOS ${kronosPrediction.model.toUpperCase()} · ${kronosPrediction.forecast.length} VELAS · LÍNEA AMARILLA / VELAS CIAN-MAGENTA`
+              : "KRONOS · ESPERANDO VELA CERRADA"}
           </div>
         )}
         <div ref={containerRef} className="absolute inset-0 w-full h-full" />

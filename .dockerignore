@@ -11,6 +11,8 @@ dist
 **/dist
 data
 *.log
+**/__pycache__
+**/*.py[cod]
 docs
 **/*.test.ts
 **/*.tsbuildinfo

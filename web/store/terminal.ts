@@ -21,7 +21,29 @@ export type WidgetType =
   | "calendar"
   | "insider"
   | "tv"
-  | "recap";
+  | "recap"
+  | "kronos";
+
+export type ChartTimeframe = "AUTO" | "4H" | "3H" | "1H" | "30m" | "15m" | "5m" | "1m" | "10s" | "1s";
+export type KronosTimeframe = "4H" | "3H" | "1H" | "30m" | "15m" | "5m";
+export type KronosModel = "mini" | "small" | "base";
+
+export type KronosSettings = {
+  enabled: boolean;
+  model: KronosModel;
+  lookback: number;
+  predictionLength: number;
+  temperature: number;
+  topK: number;
+  topP: number;
+  sampleCount: number;
+};
+
+export type KronosRuntime = {
+  status: "idle" | "paused" | "loading" | "ready" | "error";
+  generatedAt: string | null;
+  error: string | null;
+};
 
 export type WidgetInstance = {
   id: string;
@@ -38,6 +60,9 @@ type TerminalState = {
   layout: LayoutItem[];
   watchlist: string[];
   commandOpen: boolean;
+  primaryChart: { symbol: string; timeframe: ChartTimeframe };
+  kronos: KronosSettings;
+  kronosRuntime: KronosRuntime;
   setActiveSymbol: (s: string) => void;
   setCommandOpen: (open: boolean) => void;
   addWidget: (type: WidgetType, symbol?: string) => void;
@@ -48,7 +73,31 @@ type TerminalState = {
   addToWatchlist: (s: string) => void;
   removeFromWatchlist: (s: string) => void;
   resetWorkspace: () => void;
+  setPrimaryChart: (chart: { symbol: string; timeframe: ChartTimeframe }) => void;
+  setKronos: (settings: Partial<KronosSettings>) => void;
+  setKronosRuntime: (runtime: Partial<KronosRuntime>) => void;
 };
+
+export const DEFAULT_KRONOS_SETTINGS: KronosSettings = {
+  enabled: false,
+  model: "mini",
+  lookback: 256,
+  predictionLength: 12,
+  temperature: 1,
+  topK: 0,
+  topP: 0.9,
+  sampleCount: 1,
+};
+
+export const KRONOS_MAX_CONTEXT: Record<KronosModel, number> = {
+  mini: 2048,
+  small: 512,
+  base: 512,
+};
+
+export function isKronosTimeframe(value: ChartTimeframe): value is KronosTimeframe {
+  return value === "5m" || value === "15m" || value === "30m" || value === "1H" || value === "3H" || value === "4H";
+}
 
 const DEFAULT_WIDGETS: WidgetInstance[] = [
   { id: "w-chart", type: "chart", linked: true },
@@ -82,6 +131,7 @@ const SIZE_BY_TYPE: Record<WidgetType, { w: number; h: number }> = {
   insider: { w: 7, h: 9 },
   tv: { w: 6, h: 11 },
   recap: { w: 5, h: 12 },
+  kronos: { w: 5, h: 12 },
 };
 
 export const useTerminal = create<TerminalState>()(
@@ -92,6 +142,9 @@ export const useTerminal = create<TerminalState>()(
       layout: DEFAULT_LAYOUT,
       watchlist: ["BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "DOGEUSD", "ADAUSD", "AVAXUSD", "UNIUSD"],
       commandOpen: false,
+      primaryChart: { symbol: "BTCUSD", timeframe: "AUTO" },
+      kronos: DEFAULT_KRONOS_SETTINGS,
+      kronosRuntime: { status: "idle", generatedAt: null, error: null },
       setActiveSymbol: (s) => {
         const sym = normalizeSymbol(s);
         if (sym) set({ activeSymbol: sym });
@@ -133,8 +186,23 @@ export const useTerminal = create<TerminalState>()(
       },
       removeFromWatchlist: (s) => set((st) => ({ watchlist: st.watchlist.filter((x) => x !== s) })),
       resetWorkspace: () => set({ widgets: DEFAULT_WIDGETS, layout: DEFAULT_LAYOUT }),
+      setPrimaryChart: (primaryChart) => set({ primaryChart }),
+      setKronos: (settings) => set((state) => ({ kronos: { ...state.kronos, ...settings } })),
+      setKronosRuntime: (runtime) => set((state) => ({
+        kronosRuntime: { ...state.kronosRuntime, ...runtime },
+      })),
     }),
-    { name: "openterminal-workspace" }
+    {
+      name: "openterminal-workspace",
+      partialize: (state) => ({
+        activeSymbol: state.activeSymbol,
+        widgets: state.widgets,
+        layout: state.layout,
+        watchlist: state.watchlist,
+        primaryChart: state.primaryChart,
+        kronos: state.kronos,
+      }) as TerminalState,
+    }
   )
 );
 

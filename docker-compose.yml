@@ -1,4 +1,23 @@
 services:
+  kronos:
+    build:
+      context: .
+      dockerfile: services/kronos/Dockerfile
+    ports:
+      - "127.0.0.1:${KRONOS_PORT:-8001}:8000"
+    environment:
+      - KRONOS_DEVICE=${KRONOS_DEVICE:-cpu}
+      - HF_HOME=/models/huggingface
+    volumes:
+      - kronos-models:/models/huggingface
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -21,6 +40,8 @@ services:
       - KRAKEN_KEY_PRIVATE=${KRAKEN_KEY_PRIVATE:-}
       - KRAKEN_FUTURES_API_URL_LIVE=${KRAKEN_FUTURES_API_URL_LIVE:-https://futures.kraken.com}
       - KRAKEN_LIVE_TRADING_ENABLED=${KRAKEN_LIVE_TRADING_ENABLED:-false}
+      - KRONOS_URL=http://kronos:8000
+      - KRONOS_TIMEOUT_MS=${KRONOS_TIMEOUT_MS:-300000}
       - API_HOST=0.0.0.0 # safe: still only published to 127.0.0.1 above
       - WEB_ORIGIN=${WEB_ORIGIN:-http://localhost:3001}
       - DATA_DIR=/app/data
@@ -30,6 +51,9 @@ services:
       - TRUST_PROXY=${TRUST_PROXY:-}
     volumes:
       - terminal-data:/app/data
+    depends_on:
+      kronos:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 5s
@@ -66,3 +90,4 @@ services:
 
 volumes:
   terminal-data:
+  kronos-models:

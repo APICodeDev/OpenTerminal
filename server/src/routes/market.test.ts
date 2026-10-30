@@ -69,6 +69,26 @@ describe("GET /history/:symbol crypto intervals", () => {
   });
 });
 
+describe("GET /history/:symbol stock intervals", () => {
+  it("rejects stock candles below five minutes before touching the network", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      const handler = getHandler("/history/:symbol");
+      const req = { params: { symbol: "AAPL" }, query: { range: "1D", interval: "1m" } } as unknown as Request;
+      const res = fakeRes();
+
+      await handler(req, res, () => {});
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: "unsupported stock interval" });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe("GET /crypto/heatmap", () => {
   it("returns the current server-side capture snapshot without requesting data from the client", () => {
     const handler = getHandler("/crypto/heatmap");

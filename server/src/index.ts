@@ -5,6 +5,7 @@ import { marketRouter } from "./routes/market.js";
 import { portfolioRouter } from "./routes/portfolio.js";
 import { aiRouter } from "./routes/ai.js";
 import { krakenRouter } from "./routes/kraken.js";
+import { kronosRouter } from "./routes/kronos.js";
 import { allStats } from "./providers/registry.js";
 import { requireApiKey } from "./auth.js";
 import { rateLimit } from "./rateLimit.js";
@@ -52,6 +53,12 @@ app.use(
   requireApiKey,
   rateLimit({ windowMs: 60_000, max: 10 }),
   aiRouter
+);
+app.use(
+  "/api/kronos",
+  requireApiKey,
+  rateLimit({ windowMs: 60_000, max: 30 }),
+  kronosRouter
 );
 
 app.get("/api/status", (_req, res) => {

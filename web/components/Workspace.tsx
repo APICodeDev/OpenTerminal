@@ -23,6 +23,7 @@ import CalendarWidget from "./widgets/CalendarWidget";
 import InsiderWidget from "./widgets/InsiderWidget";
 import TvWidget from "./widgets/TvWidget";
 import RecapWidget from "./widgets/RecapWidget";
+import KronosWidget from "./widgets/KronosWidget";
 import WidgetErrorBoundary from "./WidgetErrorBoundary";
 
 const Grid = WidthProvider(GridLayout);
@@ -46,6 +47,7 @@ function WidgetBody({ widget }: { widget: WidgetInstance }) {
     case "insider": return <InsiderWidget widget={widget} />;
     case "tv": return <TvWidget />;
     case "recap": return <RecapWidget />;
+    case "kronos": return <KronosWidget />;
   }
 }
 
@@ -101,6 +103,7 @@ const TITLES: Record<string, string> = {
   orderflowHeatmap: "Orderflow Heatmap",
   macro: "Macro / Indexes", options: "Option Chain", portfolio: "Portfolio", ai: "AI Assistant",
   calendar: "Calendar", insider: "Insider Transactions", tv: "Live TV", recap: "Market Recap",
+  kronos: "Kronos Forecast",
 };
 
 export default function Workspace() {
