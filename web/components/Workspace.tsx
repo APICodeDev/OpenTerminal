@@ -13,6 +13,8 @@ import NewsWidget from "./widgets/NewsWidget";
 import HeatmapWidget from "./widgets/HeatmapWidget";
 import ScreenerWidget from "./widgets/ScreenerWidget";
 import CryptoWidget from "./widgets/CryptoWidget";
+import CryptoFlowWidget from "./widgets/CryptoFlowWidget";
+import OrderflowHeatmapWidget from "./widgets/OrderflowHeatmapWidget";
 import MacroWidget from "./widgets/MacroWidget";
 import OptionsWidget from "./widgets/OptionsWidget";
 import PortfolioWidget from "./widgets/PortfolioWidget";
@@ -34,6 +36,8 @@ function WidgetBody({ widget }: { widget: WidgetInstance }) {
     case "heatmap": return <HeatmapWidget />;
     case "screener": return <ScreenerWidget />;
     case "crypto": return <CryptoWidget />;
+    case "cryptoFlow": return <CryptoFlowWidget widget={widget} />;
+    case "orderflowHeatmap": return <OrderflowHeatmapWidget />;
     case "macro": return <MacroWidget />;
     case "options": return <OptionsWidget widget={widget} />;
     case "portfolio": return <PortfolioWidget />;
@@ -93,7 +97,8 @@ function SymbolTag({ widget, activeSymbol }: { widget: WidgetInstance; activeSym
 
 const TITLES: Record<string, string> = {
   quote: "Quote", chart: "Chart", watchlist: "Watchlist", news: "News",
-  heatmap: "Heatmap", screener: "Screener", crypto: "Crypto",
+  heatmap: "Heatmap", screener: "Screener", crypto: "Crypto USD", cryptoFlow: "Crypto Flow",
+  orderflowHeatmap: "Orderflow Heatmap",
   macro: "Macro / Indexes", options: "Option Chain", portfolio: "Portfolio", ai: "AI Assistant",
   calendar: "Calendar", insider: "Insider Transactions", tv: "Live TV", recap: "Market Recap",
 };
@@ -106,7 +111,7 @@ export default function Workspace() {
   const toggleLinked = useTerminal((s) => s.toggleLinked);
   const activeSymbol = useTerminal((s) => s.activeSymbol);
 
-  const symbolAware = new Set(["quote", "chart", "news", "options", "insider"]);
+  const symbolAware = new Set(["quote", "chart", "news", "options", "insider", "cryptoFlow"]);
 
   return (
     <Grid

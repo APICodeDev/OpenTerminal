@@ -3,9 +3,22 @@
 import { useMutation } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { apiGet, apiPost, type Quote } from "../../lib/api";
+import { isCryptoUsdSymbol } from "../../lib/crypto";
 import { useTerminal } from "../../store/terminal";
 
 type Msg = { role: "user" | "assistant"; content: string };
+
+async function optionalGet<T>(path: string): Promise<T | null> {
+  try {
+    return await apiGet<T>(path);
+  } catch {
+    return null;
+  }
+}
+
+function tail<T>(value: T[] | null, limit: number): T[] | null {
+  return value ? value.slice(-limit) : null;
+}
 
 export default function AiWidget() {
   const activeSymbol = useTerminal((s) => s.activeSymbol);
@@ -14,14 +27,32 @@ export default function AiWidget() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const chat = useMutation({
-    mutationFn: async (userText: string) => {
-      let context: unknown = null;
-      try {
-        context = { activeSymbol, quote: (await apiGet<Quote[]>(`/api/quotes?symbols=${encodeURIComponent(activeSymbol)}`))[0] };
-      } catch {
-        // context is best-effort
-      }
-      const next = [...messages, { role: "user" as const, content: userText }];
+    mutationFn: async (next: Msg[]) => {
+      const symbol = encodeURIComponent(activeSymbol);
+      const crypto = isCryptoUsdSymbol(activeSymbol);
+      const [quotes, candles, orderBook, trades, liquidations] = await Promise.all([
+        optionalGet<Quote[]>(`/api/quotes?symbols=${symbol}`),
+        optionalGet<unknown[]>(`/api/history/${symbol}?range=1D&interval=${crypto ? "5m" : "AUTO"}`),
+        crypto ? optionalGet<{ bids?: unknown[]; asks?: unknown[] }>(`/api/crypto/orderbook/${symbol}`) : null,
+        crypto ? optionalGet<unknown[]>(`/api/crypto/trades/${symbol}`) : null,
+        crypto ? optionalGet<{ events?: unknown[]; heatmap?: unknown[] }>(`/api/crypto/liquidations/${symbol}`) : null,
+      ]);
+      const context = {
+        activeSymbol,
+        collectedAt: new Date().toISOString(),
+        quote: quotes?.[0] ?? null,
+        candles: tail(candles, 60),
+        orderBook: orderBook ? {
+          ...orderBook,
+          bids: orderBook.bids?.slice(0, 15),
+          asks: orderBook.asks?.slice(0, 15),
+        } : null,
+        recentTrades: tail(trades, 40),
+        liquidations: liquidations ? {
+          events: tail(liquidations.events ?? null, 40),
+          heatmap: tail(liquidations.heatmap ?? null, 40),
+        } : null,
+      };
       const res = await apiPost<{ text: string }>("/api/ai/chat", { messages: next, context });
       return { next, reply: res.text };
     },
@@ -34,9 +65,10 @@ export default function AiWidget() {
   const send = () => {
     const text = input.trim();
     if (!text || chat.isPending) return;
-    setMessages((m) => [...m, { role: "user", content: text }]);
+    const next = [...messages, { role: "user" as const, content: text }];
+    setMessages(next);
     setInput("");
-    chat.mutate(text);
+    chat.mutate(next);
   };
 
   return (
@@ -44,7 +76,7 @@ export default function AiWidget() {
       <div ref={scrollRef} className="flex-1 overflow-auto p-2 space-y-2 min-h-0">
         {messages.length === 0 && (
           <div className="dim">
-            Ask about {activeSymbol}, the market, an indicator, or a headline. The current quote is shared as context.
+            Ask about {activeSymbol}, the market, an indicator, or a headline. Quotes, recent candles and crypto order flow are shared as context.
           </div>
         )}
         {messages.map((m, i) => (

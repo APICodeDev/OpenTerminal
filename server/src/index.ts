@@ -1,11 +1,15 @@
+import "./env.js";
 import express from "express";
 import cors from "cors";
 import { marketRouter } from "./routes/market.js";
 import { portfolioRouter } from "./routes/portfolio.js";
 import { aiRouter } from "./routes/ai.js";
+import { krakenRouter } from "./routes/kraken.js";
 import { allStats } from "./providers/registry.js";
 import { requireApiKey } from "./auth.js";
 import { rateLimit } from "./rateLimit.js";
+import { resolveAiConfig } from "./aiConfig.js";
+import { startHeatmapCapture } from "./providers/heatmapCapture.js";
 
 const app = express();
 
@@ -38,6 +42,12 @@ app.use("/api", rateLimit({ windowMs: 60_000, max: 240 }), marketRouter);
 // Portfolio data and the paid AI endpoint require a shared secret; see auth.ts.
 app.use("/api/portfolios", requireApiKey, portfolioRouter);
 app.use(
+  "/api/kraken",
+  requireApiKey,
+  rateLimit({ windowMs: 60_000, max: 60 }),
+  krakenRouter
+);
+app.use(
   "/api/ai",
   requireApiKey,
   rateLimit({ windowMs: 60_000, max: 10 }),
@@ -45,11 +55,13 @@ app.use(
 );
 
 app.get("/api/status", (_req, res) => {
+  const ai = resolveAiConfig();
   res.json({
     ok: true,
     time: new Date().toISOString(),
     providers: allStats(),
-    ai: Boolean(process.env.ANTHROPIC_API_KEY),
+    ai: ai.configured,
+    aiModel: ai.configured ? ai.model : null,
   });
 });
 
@@ -58,6 +70,7 @@ const PORT = Number(process.env.API_PORT ?? 4000);
 // unauthenticated-by-default API to the network. Set API_HOST=0.0.0.0 (and
 // API_KEY + WEB_ORIGIN) to intentionally expose it beyond this machine.
 const HOST = process.env.API_HOST ?? "127.0.0.1";
+startHeatmapCapture();
 app.listen(PORT, HOST, () => {
   console.log(`OpenTerminal API listening on http://${HOST}:${PORT}`);
 });

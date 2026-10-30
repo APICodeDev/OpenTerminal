@@ -9,10 +9,13 @@ import * as ecb from "../providers/ecb.js";
 import * as tradingview from "../providers/tradingview.js";
 import * as coingecko from "../providers/coingecko.js";
 import * as binance from "../providers/binance.js";
+import * as kraken from "../providers/kraken.js";
+import { CRYPTO_ASSETS, canonicalCryptoSymbol } from "../providers/cryptoSymbols.js";
 import * as news from "../providers/news.js";
 import * as econcalendar from "../providers/econcalendar.js";
 import * as finra from "../providers/finra.js";
 import * as secedgar from "../providers/secedgar.js";
+import { getHeatmapSnapshot, getOrderflowHistory } from "../providers/heatmapCapture.js";
 
 export const marketRouter = Router();
 
@@ -124,9 +127,14 @@ async function getQuotes(symbols: string[]): Promise<yahoo.Quote[]> {
   const fetched = new Map<string, yahoo.Quote>();
   let remaining = missing;
 
-  const cryptoSymbols = remaining.filter((s) => binance.CRYPTO_SYMBOLS.has(s));
+  const cryptoSymbols = remaining.filter((s) => canonicalCryptoSymbol(s));
   if (cryptoSymbols.length > 0) {
-    const results = await Promise.allSettled(cryptoSymbols.map((s) => binance.quote(s)));
+    const results = await Promise.allSettled(
+      cryptoSymbols.map((s) => withFallback([
+        ["kraken", () => kraken.quote(s)],
+        ["binance", () => binance.quote(s)],
+      ]))
+    );
     results.forEach((r, i) => {
       if (r.status === "fulfilled") fetched.set(cryptoSymbols[i], r.value);
     });
@@ -230,10 +238,25 @@ marketRouter.get("/quotes", async (req, res) => {
 marketRouter.get("/history/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   const rangeKey = String(req.query.range ?? "6M");
+  const interval = String(req.query.interval ?? "AUTO");
+  const venue = String(req.query.venue ?? "");
+  const cryptoSymbol = canonicalCryptoSymbol(symbol);
+  const cryptoInterval = kraken.isCryptoInterval(interval) ? interval : null;
+  if (cryptoSymbol && !cryptoInterval) {
+    return res.status(400).json({ error: "unsupported crypto interval" });
+  }
+  const historyTtl = interval === "1s" || interval === "10s" ? 500 : interval === "AUTO" ? HISTORY_TTL : 5_000;
   try {
-    const data = await cached(`history:${symbol}:${rangeKey}`, HISTORY_TTL, () =>
-      binance.CRYPTO_SYMBOLS.has(symbol)
-        ? binance.history(symbol, rangeKey)
+    const data = await cached(`history:${symbol}:${rangeKey}:${interval}:${venue}`, historyTtl, () =>
+      cryptoSymbol
+        ? venue === "binance-futures"
+          ? binance.futuresHistory(symbol, rangeKey, interval)
+          : interval === "AUTO"
+          ? withFallback([
+              ["kraken", () => kraken.history(symbol, rangeKey, "AUTO")],
+              ["binance", () => binance.history(symbol, rangeKey)],
+            ])
+          : kraken.history(symbol, rangeKey, cryptoInterval!)
         : isVix(symbol)
         ? vixHistory(rangeKey)
         : withFallback([
@@ -269,13 +292,16 @@ marketRouter.get("/search", async (req, res) => {
   const q = String(req.query.q ?? "").trim();
   if (!q) return res.json([]);
   try {
+    const cryptoMatches = CRYPTO_ASSETS.filter((asset) =>
+      `${asset.symbol} ${asset.base} ${asset.name}`.toLowerCase().includes(q.toLowerCase())
+    ).map((asset) => ({ symbol: asset.symbol, name: asset.name, exchange: "Kraken", type: "crypto" }));
     const data = await cached(`search:${q.toLowerCase()}`, 300_000, () =>
       withFallback([
         ["tradingview", () => tradingview.search(q)],
         ["yahoo", () => yahoo.search(q)],
       ])
     );
-    res.json(data);
+    res.json([...cryptoMatches, ...data.filter((row: any) => !cryptoMatches.some((crypto) => crypto.symbol === row.symbol))].slice(0, 30));
   } catch (err) {
     fail(req, res, err);
   }
@@ -355,7 +381,7 @@ marketRouter.get("/crypto", async (req, res) => {
   try {
     const data = await cached("crypto:markets", 5_000, () =>
       withFallback([
-        ["coingecko", () => coingecko.markets(50)],
+        ["kraken", () => kraken.markets()],
         ["binance", () => binance.markets()],
       ])
     );
@@ -377,14 +403,48 @@ marketRouter.get("/crypto/global", async (req, res) => {
 });
 
 marketRouter.get("/crypto/orderbook/:symbol", async (req, res) => {
-  const symbol = req.params.symbol.toUpperCase();
-  if (!binance.CRYPTO_SYMBOLS.has(symbol)) {
+  const symbol = canonicalCryptoSymbol(req.params.symbol);
+  if (!symbol) {
     return res.status(400).json({ error: "unsupported crypto symbol" });
   }
   try {
-    const data = await cached(`orderbook:${symbol}`, 5_000, () =>
-      withFallback([["binance", () => binance.orderBook(symbol)]])
+    const data = await cached(`orderbook:${symbol}`, 750, () =>
+      withFallback([["kraken", () => kraken.orderBook(symbol)]])
     );
+    res.json(data);
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
+marketRouter.get("/crypto/heatmap", (_req, res) => {
+  res.json(getHeatmapSnapshot());
+});
+
+marketRouter.get("/crypto/orderflow/:symbol", (req, res) => {
+  const symbol = canonicalCryptoSymbol(req.params.symbol);
+  if (!symbol) return res.status(400).json({ error: "unsupported crypto symbol" });
+  const data = getOrderflowHistory(symbol);
+  if (!data) return res.status(404).json({ error: "orderflow capture unavailable for this symbol" });
+  res.json(data);
+});
+
+marketRouter.get("/crypto/trades/:symbol", async (req, res) => {
+  const symbol = canonicalCryptoSymbol(req.params.symbol);
+  if (!symbol) return res.status(400).json({ error: "unsupported crypto symbol" });
+  try {
+    const data = await cached(`crypto-trades:${symbol}`, 750, () => kraken.trades(symbol, 100));
+    res.json(data);
+  } catch (err) {
+    fail(req, res, err);
+  }
+});
+
+marketRouter.get("/crypto/liquidations/:symbol", async (req, res) => {
+  const symbol = canonicalCryptoSymbol(req.params.symbol);
+  if (!symbol) return res.status(400).json({ error: "unsupported crypto symbol" });
+  try {
+    const data = await cached(`crypto-liquidations:${symbol}`, 2_000, () => kraken.liquidations(symbol));
     res.json(data);
   } catch (err) {
     fail(req, res, err);

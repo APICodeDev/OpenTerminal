@@ -12,6 +12,8 @@ export type WidgetType =
   | "heatmap"
   | "screener"
   | "crypto"
+  | "cryptoFlow"
+  | "orderflowHeatmap"
   | "macro"
   | "options"
   | "portfolio"
@@ -51,17 +53,15 @@ type TerminalState = {
 const DEFAULT_WIDGETS: WidgetInstance[] = [
   { id: "w-chart", type: "chart", linked: true },
   { id: "w-quote", type: "quote", linked: true },
-  { id: "w-watchlist", type: "watchlist", linked: false },
-  { id: "w-news", type: "news", linked: true },
-  { id: "w-macro", type: "macro", linked: false },
+  { id: "w-crypto-flow", type: "cryptoFlow", linked: true },
+  { id: "w-crypto", type: "crypto", linked: false },
 ];
 
 const DEFAULT_LAYOUT: LayoutItem[] = [
   { i: "w-chart", x: 0, y: 0, w: 7, h: 12 },
   { i: "w-quote", x: 7, y: 0, w: 5, h: 6 },
-  { i: "w-watchlist", x: 7, y: 6, w: 5, h: 6 },
-  { i: "w-news", x: 0, y: 12, w: 7, h: 7 },
-  { i: "w-macro", x: 7, y: 12, w: 5, h: 7 },
+  { i: "w-crypto-flow", x: 7, y: 6, w: 5, h: 16 },
+  { i: "w-crypto", x: 0, y: 12, w: 7, h: 10 },
 ];
 
 const SIZE_BY_TYPE: Record<WidgetType, { w: number; h: number }> = {
@@ -72,6 +72,8 @@ const SIZE_BY_TYPE: Record<WidgetType, { w: number; h: number }> = {
   heatmap: { w: 7, h: 10 },
   screener: { w: 12, h: 9 },
   crypto: { w: 6, h: 9 },
+  cryptoFlow: { w: 8, h: 14 },
+  orderflowHeatmap: { w: 12, h: 14 },
   macro: { w: 5, h: 7 },
   options: { w: 12, h: 9 },
   portfolio: { w: 7, h: 8 },
@@ -85,10 +87,10 @@ const SIZE_BY_TYPE: Record<WidgetType, { w: number; h: number }> = {
 export const useTerminal = create<TerminalState>()(
   persist(
     (set) => ({
-      activeSymbol: "AAPL",
+      activeSymbol: "BTCUSD",
       widgets: DEFAULT_WIDGETS,
       layout: DEFAULT_LAYOUT,
-      watchlist: ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY"],
+      watchlist: ["BTCUSD", "ETHUSD", "SOLUSD", "XRPUSD", "DOGEUSD", "ADAUSD", "AVAXUSD", "UNIUSD"],
       commandOpen: false,
       setActiveSymbol: (s) => {
         const sym = normalizeSymbol(s);

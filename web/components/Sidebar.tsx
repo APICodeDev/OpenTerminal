@@ -9,6 +9,8 @@ const ITEMS: Array<{ type: WidgetType; label: string; key: string }> = [
   { type: "screener", label: "SCREENER", key: "⌥4" },
   { type: "heatmap", label: "HEATMAP", key: "⌥5" },
   { type: "crypto", label: "CRYPTO", key: "⌥6" },
+  { type: "cryptoFlow", label: "CRYPTO FLOW", key: "" },
+  { type: "orderflowHeatmap", label: "ORDERFLOW MAP", key: "" },
   { type: "options", label: "OPTIONS", key: "⌥7" },
   { type: "portfolio", label: "PORTFOLIO", key: "⌥8" },
   { type: "ai", label: "AI ASSIST", key: "⌥9" },

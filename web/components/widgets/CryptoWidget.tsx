@@ -18,23 +18,6 @@ function fmtPrice(p: number | null): string {
   return p >= 1 ? fmt(p) : p.toPrecision(4);
 }
 
-function Sparkline({ data }: { data: number[] }) {
-  if (data.length < 2) return null;
-  const w = 60;
-  const h = 16;
-  const min = Math.min(...data);
-  const max = Math.max(...data);
-  const pts = data
-    .map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - min) / (max - min || 1)) * h}`)
-    .join(" ");
-  const upTrend = data[data.length - 1] >= data[0];
-  return (
-    <svg width={w} height={h}>
-      <polyline points={pts} fill="none" stroke={upTrend ? "#00c853" : "#ff3d3d"} strokeWidth={1} />
-    </svg>
-  );
-}
-
 export default function CryptoWidget() {
   const setActiveSymbol = useTerminal((s) => s.setActiveSymbol);
   const { data = [], error } = useQuery({
@@ -61,7 +44,7 @@ export default function CryptoWidget() {
       )}
       <table className="data-table">
         <thead>
-          <tr><th>#</th><th>Asset</th><th>Price</th><th>24h%</th><th>MCap</th><th>Vol 24h</th><th>7d</th></tr>
+          <tr><th>#</th><th>Par USD</th><th>Precio</th><th>24h%</th><th>Vol 24h USD</th><th>Fuente</th></tr>
         </thead>
         <tbody>
           {data.map((c) => (
@@ -72,9 +55,8 @@ export default function CryptoWidget() {
               <td className={pctClass(c.changePercent24h)}>
                 <Flash value={c.changePercent24h}>{fmt(c.changePercent24h)}%</Flash>
               </td>
-              <td>{fmtBig(c.marketCap)}</td>
               <td>{fmtBig(c.volume24h)}</td>
-              <td><Sparkline data={c.sparkline.filter((_, i) => i % 4 === 0)} /></td>
+              <td className="dim">Kraken</td>
             </tr>
           ))}
         </tbody>

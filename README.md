@@ -37,13 +37,15 @@ No signup. No credit card. No rate‑limited demo tier. Clone it, `npm install`,
 
 - 🖥️ **Widget-based workspace** — drag, resize, add, and remove panels (`react-grid-layout`); your layout is saved locally and restored on reload
 - ⌘K **global command palette** — instantly search stocks, ETFs, and crypto and jump straight to them
-- 📈 **Professional charting** (via [`lightweight-charts`](https://github.com/tradingview/lightweight-charts)) — candlesticks, bars, line, area, volume, 8 timeframes (1D → MAX), and SMA / EMA / VWAP / Bollinger Bands / RSI / MACD indicators, each with a live hover legend showing OHLC, volume, and every active indicator's value under your cursor
+- 📈 **Professional charting** (via [`lightweight-charts`](https://github.com/tradingview/lightweight-charts)) — candlesticks, bars, line, area, volume, 8 ranges (1D → MAX), crypto candle intervals from 4H down to real-trade 1s, and SMA / EMA / VWAP / Bollinger Bands / RSI / MACD indicators, each with a live hover legend showing OHLC, volume, and every active indicator's value under your cursor
 - 💹 **Quote panel** — last / bid / ask / OHLC, volume, market cap, P/E, EPS, dividend yield, 52‑week range, beta, shares outstanding
 - 📰 **News feed** — aggregated and de‑duplicated from multiple RSS sources, per‑symbol or global
 - 🔎 **Full‑market screener** — filter by sector, market cap, % change, and volume across the entire US equity market, sortable on every column
 - 🗺️ **Live sector heatmap** — treemap sized by market cap, colored by daily % change, refreshing every few seconds
+- 🌡️ **Chart order-flow overlays** — price/time-aligned liquidity heatmap, large-trade bubbles, and liquidation markers on crypto charts
 - ⛓️ **Options chain** — calls and puts side‑by‑side with strike, bid/ask, volume, open interest, and ITM highlighting
-- 🪙 **Crypto board** — top assets with 7‑day sparklines, BTC/ETH dominance, and full OHLCV charting for any listed coin
+- 🪙 **Crypto USD terminal** — common `*USD` pairs, Kraken WebSocket order book/trades, buy/sell depth heatmaps, Kraken Futures liquidation flow, and OHLCV charts
+- ⚡ **Kraken execution** — validate or place spot market/limit orders through protected server-side routes; API secrets never reach the browser
 - 🏦 **Macro dashboard** — live US Treasury yield curve, VIX, and major index/commodity proxies
 - 💼 **Portfolio tracker** — log buy/sell transactions, track average cost, realized & unrealized P&L (persisted in SQLite)
 - 📅 **Calendar** — economic events (Fed, ECB, CPI, NFP and more) with consensus forecast, previous reading and, for the major US/EU releases, the actual outcome; plus a per‑watchlist earnings calendar with click‑through history showing forecast vs. actual EPS for the last several quarters and the stock's next‑day price move
@@ -100,8 +102,9 @@ No paid API, no keys, and no single point of failure — every endpoint has a fa
 | Full‑market screener / heatmap | TradingView scanner API (live, whole US market) | — |
 | Options chain | Nasdaq option‑chain API | Yahoo Finance |
 | News | Yahoo Finance RSS | Google News RSS |
-| Crypto quotes & board | CoinGecko | Binance public API |
-| Crypto candles | Binance public API (klines) | — |
+| Crypto USD quotes, candles, trades & order book | Kraken Spot REST + WebSocket v2 | Binance public API |
+| Liquidations & liquidation heatmap | Kraken Futures history + analytics | — |
+| Chart liquidity/order-flow overlays (depth, trades, liquidations) | Binance USD-M Futures WebSocket | — |
 | Macro (Treasury yields, VIX) | FRED (Federal Reserve) | — |
 | Economic calendar (schedule, forecast, previous) | Forex Factory public feed | — |
 | Economic calendar (actual — Fed / ECB / CPI / NFP only) | FRED (Federal Reserve) | — |
@@ -109,6 +112,8 @@ No paid API, no keys, and no single point of failure — every endpoint has a fa
 | Earnings history (forecast vs. actual, surprise %) | Nasdaq earnings‑surprise API | — |
 
 > ⚠️ These are public endpoints, not officially licensed data feeds — treat prices as delayed/indicative, not execution‑grade. See [`server/src/providers/`](server/src/providers) — each provider is a small, isolated module, so swapping or adding a data source is a 30‑minute job.
+
+The chart order-flow overlays capture `BTCUSD`, `ETHUSD`, `ADAUSD`, `AVAXUSD`, `FILUSD`, `NEARUSD`, `UNIUSD`, `SUIUSD`, `XRPUSD`, `HBARUSD`, `RENDERUSD`, and `SOLUSD` while the API server is running. The chart retains 30 minutes of depth snapshots, large trades, and liquidation events in memory. Enable **MAPA LIQUIDEZ**, **ORDER FLOW**, or **LIQUIDACIONES** in a crypto chart; these controls only affect visibility, not capture. `SP500`/`NAS100` require a CME `ES`/`NQ` feed; `SPX` and `NDAQ` also need an appropriate market-data provider.
 
 <br/>
 
@@ -133,17 +138,32 @@ export ANTHROPIC_API_KEY=sk-ant-...
 npm run dev
 ```
 
+For compatibility, the existing `ANTHROPIC_APIKEY` spelling is also accepted. `ANTHROPIC_URL` is not used as an API endpoint because it may point to the Claude key-management page; use `ANTHROPIC_BASE_URL` only for an Anthropic-compatible API gateway.
+
 Without a key, everything else still works — the AI widget just shows a friendly "unavailable" message instead of failing.
+
+### Kraken trading (optional)
+
+Public USD prices, order books, trades and liquidation analytics do not require credentials. To validate or execute orders, configure either `KRAKEN_LIVE_API_KEY` / `KRAKEN_LIVE_API_SECRET` or the legacy aliases `KRAKEN_KEY_PUBLIC` / `KRAKEN_KEY_PRIVATE` in `.env`.
+
+Live orders remain blocked unless this is also set explicitly:
+
+```env
+KRAKEN_LIVE_TRADING_ENABLED=true
+```
+
+The UI defaults to Kraken's validate-only mode. A live order additionally requires the confirmation phrase `OPERAR EN KRAKEN`. Use a Kraken key restricted to the minimum required order/query permissions and disable withdrawals on that key.
 
 Two optional knobs for the assistant, both standard for the Anthropic SDK:
 
 - `ANTHROPIC_BASE_URL` — point the assistant at an Anthropic-compatible endpoint (a self-hosted gateway, an EU-hosted relay, etc.) instead of api.anthropic.com.
 - `ANTHROPIC_MODEL` — override the model sent in requests (default: `claude-opus-4-8`). Required when the endpoint behind `ANTHROPIC_BASE_URL` serves models under different ids.
+- `ANTHROPIC_MAX_TOKENS` — cap the response token budget (default: `4000`, allowed range: `256`–`16000`).
 
 ### Security defaults
 
-- The API binds to `127.0.0.1` and only accepts browser requests from `http://localhost:3000` by default — nothing else on your network can reach it out of the box.
-- The portfolio and AI endpoints require a shared secret. If you don't set `API_KEY` yourself, the API generates one on first run and saves it to `data/.api-key`; the bundled web app reads that file automatically, so local dev stays zero-config.
+- Outside Docker, the API binds to `127.0.0.1` and accepts browser requests from `http://localhost:3000` by default. The Docker configuration uses `http://localhost:3001` because that is its published web port.
+- The portfolio, AI and private Kraken endpoints require a shared secret. If you don't set `API_KEY` yourself, the API generates one on first run and saves it to `data/.api-key`; the bundled web app reads that file automatically, so local dev stays zero-config.
 - To expose this beyond your own machine, set `API_HOST=0.0.0.0`, `API_KEY=<a-strong-secret>` (on both the api and web processes), and `WEB_ORIGIN=<your actual origin>` explicitly. Don't do this without also keeping dependencies patched — see [Known limitations](#known-limitations) below.
 - The `/api/ai` rate limit (10 req/min) keys on `req.ip`. Calls made through the bundled web proxy all arrive from that proxy's own address, so by default every caller sharing it shares one bucket. If you're serving more than one real user through it, set `TRUST_PROXY=1` on the api process **only if** you also run your own reverse proxy in front of the web service that sets `X-Forwarded-For` from the real client and doesn't let visitors set it themselves — otherwise a caller can forge that header to dodge the limit.
 
@@ -155,7 +175,16 @@ Two optional knobs for the assistant, both standard for the Anthropic SDK:
 docker compose up --build
 ```
 
-Portfolio data persists in the `terminal-data` volume (SQLite, WAL mode). Ports are published on `127.0.0.1` only by default; see [Security defaults](#security-defaults) to expose it deliberately.
+Open the web UI at **http://localhost:3001**; the API health endpoint is **http://localhost:4000/api/status**. Portfolio data persists in the `terminal-data` volume (SQLite, WAL mode). Ports are published on `127.0.0.1` only by default; see [Security defaults](#security-defaults) to expose it deliberately.
+
+If either default port is already in use, set `WEB_PORT` or `API_PORT` before starting Compose. For example, in PowerShell:
+
+```powershell
+$env:WEB_PORT = 3010
+docker compose up --build
+```
+
+Then open **http://localhost:3010**.
 
 <br/>
 

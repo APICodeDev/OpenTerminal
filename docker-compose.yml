@@ -7,12 +7,22 @@ services:
     # To expose it on your network/internet, bind wider here AND set API_KEY
     # below explicitly (otherwise a fresh key is generated per container).
     ports:
-      - "127.0.0.1:4000:4000"
+      - "127.0.0.1:${API_PORT:-4000}:4000"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_APIKEY=${ANTHROPIC_APIKEY:-}
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-opus-4-8}
+      - ANTHROPIC_MAX_TOKENS=${ANTHROPIC_MAX_TOKENS:-4000}
       - API_KEY=${API_KEY:-}
+      - KRAKEN_LIVE_API_KEY=${KRAKEN_LIVE_API_KEY:-}
+      - KRAKEN_LIVE_API_SECRET=${KRAKEN_LIVE_API_SECRET:-}
+      - KRAKEN_KEY_PUBLIC=${KRAKEN_KEY_PUBLIC:-}
+      - KRAKEN_KEY_PRIVATE=${KRAKEN_KEY_PRIVATE:-}
+      - KRAKEN_FUTURES_API_URL_LIVE=${KRAKEN_FUTURES_API_URL_LIVE:-https://futures.kraken.com}
+      - KRAKEN_LIVE_TRADING_ENABLED=${KRAKEN_LIVE_TRADING_ENABLED:-false}
       - API_HOST=0.0.0.0 # safe: still only published to 127.0.0.1 above
-      - WEB_ORIGIN=${WEB_ORIGIN:-http://localhost:3000}
+      - WEB_ORIGIN=${WEB_ORIGIN:-http://localhost:3001}
       - DATA_DIR=/app/data
       # Leave unset unless you put your own trusted reverse proxy in front of
       # the web service (see README > Security defaults) — otherwise a caller
@@ -20,6 +30,12 @@ services:
       - TRUST_PROXY=${TRUST_PROXY:-}
     volumes:
       - terminal-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/status').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
 
   web:
@@ -27,15 +43,25 @@ services:
       context: .
       dockerfile: web/Dockerfile
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${WEB_PORT:-3001}:3000"
     environment:
       - API_URL=http://api:4000
       - API_KEY=${API_KEY:-}
       - API_KEY_FILE=/app/data/.api-key
+      # Next's standalone server otherwise inherits Docker's container-id
+      # HOSTNAME and can fail to bind while embedded DNS is starting.
+      - HOSTNAME=0.0.0.0
     volumes:
       - terminal-data:/app/data:ro
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
 
 volumes:
